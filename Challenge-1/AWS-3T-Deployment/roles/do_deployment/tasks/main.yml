@@ -1,0 +1,357 @@
+---
+ 
+  - name: "Print the irm script dir"
+    debug:
+      var: irm_scripts_folder
+ 
+  - name: "Get Time Stamp"
+    command: sh -c "eval date +%F_%s"
+    register: time_stamp
+ 
+  - name: "Print Time Stamp"
+    debug:
+      var: time_stamp.stdout
+ 
+  - name: "Print AWS_ACCOUNT_ID"
+    debug:
+      var: AWS_ACCOUNT_ID
+ 
+  - name: "Parse Command Options"
+    vars:
+      msg: |
+         ENV is {{ ENV }}
+         TYPE is {{ TYPE }}
+         mysql_user is {{ mysql_user }}
+    debug:
+      msg: "{{ msg.split('\n') }}"
+ 
+  - name: "Print sub_command_script"
+    debug:
+      msg: "{{ irm_scripts_folder }}/commands/{{ ENV }}deployment_{{ TYPE }}"
+ 
+  - name: "Configure aws params"
+    vars:
+      msg: |
+         JAVA_HOME is {{ JAVA_HOME }}
+         AWS_CREDENTIAL_FILE is {{ AWS_CREDENTIAL_FILE }}
+         AWS_DEFAULT_OUTPUT is {{ AWS_DEFAULT_OUTPUT }}
+         EC2_HOME is {{ EC2_HOME }}
+         AWS_RDS_HOME is {{ AWS_RDS_HOME }}
+         AWS_AUTO_SCALING_HOME is {{ AWS_AUTO_SCALING_HOME }}
+         AWS_ELB_HOME is {{ AWS_ELB_HOME }}
+         AWS_CLOUDWATCH_HOME is {{ AWS_CLOUDWATCH_HOME }}
+         AWS_IAM_HOME is {{ AWS_IAM_HOME }}
+         PATH is {{ PATH }}
+    debug:
+      msg: "{{ msg.split('\n') }}"
+ 
+  - name: "Configure svn params"
+    vars:
+      msg: |
+         svn_url is {{ svn_url }}
+         svn_user is {{ svn_user }}
+    debug:
+      msg: "{{ msg.split('\n') }}"
+ 
+  - name: "Configure mysql params"
+    vars:
+      msg: |
+         mysql_path is {{ mysql_path }}
+         mysql_port is {{ mysql_port }}
+         mysql_user is {{ mysql_user }}
+         ssl_cert is {{ ssl_cert }}
+    debug:
+      msg: "{{ msg.split('\n') }}"
+ 
+  - name: "Configure rds params"
+    vars:
+      msg: |
+         rds_name is {{ rds_name }}
+         rds_host is {{ rds_host }}
+    debug:
+      msg: "{{ msg.split('\n') }}"
+ 
+  - name: "Configure app params"
+    vars:
+      msg: |
+         domainName is {{ domainName }}
+         www_root is {{ www_root }}
+         platform_type is {{ platform_type }}
+         svn_repo_folder is {{ svn_repo_folder }}
+         current_tag is {{ current_tag }}
+         current_tag_int is {{ current_tag_int }}
+         current_rev is {{ current_rev }}
+         time_stamp is {{ time_stamp }}
+         tag_name is {{ tag_name }}
+         app_name is {{ app_name }}
+         current_svn_tag_clean is {{ current_svn_tag_clean }}
+    debug:
+      msg: "{{ msg.split('\n') }}"
+ 
+  - name: "Configure deployment params"
+    debug:
+      msg: "Configure deployment params"
+ 
+  - name: "Configure cdn params"
+    vars:
+      msg: |
+         cdn_domain_var is {{ cdn_domain_var }}
+    debug:
+      msg: "{{ msg.split('\n') }}"
+ 
+  - name: "Configure vpc params"
+    vars:
+      msg: |
+         frontendVPC is {{ frontendVPC }}
+         backendVPC is {{ backendVPC }}
+         backendVPC_main is {{ backendVPC_main }}
+         CLfrontendSecurityGroupVPC is {{ CLfrontendSecurityGroupVPC }}
+         CLbackendSecurityGroupVPC is {{ CLbackendSecurityGroupVPC }}
+         frontendVPCID is {{ frontendVPCID }}
+         backendVPCID is {{ backendVPCID }}
+    debug:
+      msg: "{{ msg.split('\n') }}"
+ 
+  - name: "Get Time Stamp"
+    command: sh -c "eval date +%F"
+    register: ami_description_suffix
+ 
+  - name: "Print Time Stamp"
+    debug:
+      var: ami_description_suffix.stdout
+ 
+  - name: "Get AMI ID"
+    command: sh -c "/usr/local/bin/aws ec2 describe-images --owners {{ AWS_ACCOUNT_ID }} --output text | grep {{ ami_description_suffix.stdout }}_test | tail -1  | awk '{print $6}'"
+    register: ami_id
+ 
+  - name: "Print AMI ID"
+    debug:
+      var: ami_id.stdout
+ 
+  - name: "Identify Step Number"
+    set_fact:
+      step_number: 1
+    when: ami_id.stdout == ""
+ 
+  - name: "Print Step Number"
+    debug:
+      var: step_number
+ 
+  - name: "Find Deployment Name"
+    command: sh -c "eval date +%j"
+    register: deployment_name
+    when: step_number == 1
+ 
+  - name: "Print Deployment Name"
+    debug:
+      msg: "deployment-{{ deployment_name.stdout }}"
+    when: step_number == 1
+ 
+  - name: "Check if frontend main instance"
+    command: sh -c '/usr/local/bin/aws ec2 describe-tags --filters "Name=resource-id,Values={{ aws_instance }}" --output text | grep {{ instance_tag }} || echo'
+    register: frontend_main
+    when: step_number == 1
+ 
+  - name: "Print fontis-env tag"
+    debug:
+      var: frontend_main.stdout
+ 
+  - name: "Fail if not frontend main instance"
+    fail:
+      msg: "The script must be run on Main Frontend Instance ONLY... EXITING !!!"
+    when: not frontend_main.stdout and step_number == 1
+ 
+  - name: "Instance Health Check"
+    command: sh -c "/usr/local/bin/aws ec2 describe-instance-status --instance-id {{ aws_instance }} --output text | grep INSTANCESTATUS | grep ok && /usr/local/bin/aws ec2 describe-instance-status --instance-id {{ aws_instance }} --output text | grep SYSTEMSTATUS | grep ok"
+    register: health_check_passed
+    when: step_number == 1
+ 
+  - name: "Fail for Unhealthy Instance"
+    fail:
+      msg: "Instance {{ aws_instance }} is not healthy... EXITING !!!"
+    when: not health_check_passed and step_number == 1
+ 
+  - name: "Print current_svn_tag"
+    debug:
+      var: current_tag_int
+    when: step_number == 1
+ 
+  - name: "Print new_svn_tag"
+    debug:
+      var: new_svn_tag
+    when: step_number == 1
+ 
+  - name: "Get new revision"
+    command: sh -c 'cd /app/orm/scripts/irm/ && svn info --non-interactive --trust-server-cert --username={{ svn_user }} --password={{ svn_password }} "{{ svn_url }}/tags/{{ new_svn_tag }}" | grep "Last Changed Rev" | cut -c19-'
+    register: rev
+    when: step_number == 1
+ 
+  - name: "Print the new revision"
+    debug:
+      msg: "The revision corresponding to the new SVN Tag '{{ new_svn_tag }}' is: {{ rev.stdout }}"
+    when: step_number == 1
+ 
+  - name: "Fail if new revision not found"
+    fail:
+      msg: "The revision corresponding to {{ new_svn_tag }} not found... EXITING !!!"
+    when: rev.stdout == "" and step_number == 1
+ 
+  - name: "Add new tag to the instance to look where we are next time (Step 1 or Step 2)"
+    command: '/usr/local/bin/aws ec2 create-tags --resources {{ aws_instance }} --tags "Key={{ deployment_name.stdout }},Value={{ current_rev }}-{{ rev.stdout }}"'
+    when: step_number == 1
+ 
+  - name: "Send deployment started notification"
+    debug:
+      msg: '/usr/local/bin/aws sns publish --topic-arn="${aws_deployment_topic_arn}" --subject "${platform_type} ${app_type_upper} Hotpatch ${current_tag/_0/}.${new_rev} (run by ${whoami}) started" --message="${message_body}"'
+    when: step_number == 1
+ 
+ - name: "Print instances associated with the load-balancer"
+    command: '/usr/local/bin/aws elb describe-load-balancers --load-balancer-name {{ load_balancer_name }} --query "LoadBalancerDescriptions[*].{ID:LoadBalancerName,InstanceId:Instances[*].InstanceId}[*]. {ELB:ID,InstanceId:InstanceId[*]}"'
+    when: step_number == 1
+ 
+  - name: "Deregister self from Load Balancer to create the new AMI"
+    command: '/usr/local/bin/aws elb deregister-instances-from-load-balancer --load-balancer-name {{ load_balancer_name }} --instances {{ aws_instance }}'
+    when: step_number == 1
+ 
+  - name: "Verify whether instance is deregistered from load-balancer"
+    command: sh -c '/usr/local/bin/aws elb describe-load-balancers --load-balancer-name {{ load_balancer_name }} --query "LoadBalancerDescriptions[*].{ID:LoadBalancerName,InstanceId:Instances[*].InstanceId}[*]. {ELB:ID,InstanceId:InstanceId[*]}" | grep INSTANCEID || echo '
+    when: step_number == 1
+    register: deregister_status
+ 
+  - name: "Fail if instance is not deregistered successfully from load-balancer"
+    fail:
+      msg: "The instance failed to deregister from load-balancer... EXITING !!!"
+    when: deregister_status.stdout != "" and step_number == 1
+ 
+  - name: "Update Source Code"
+    debug:
+      msg: 'Run "${irm_scripts_folder}/helpers/update_src"'
+    when: step_number == 1
+ 
+  - name: "Delete the SVN Repo folder"
+    debug:
+      msg: 'Run rm -Rf ${www_root}/${svn_repo_folder}/*'
+    when: step_number == 1
+ 
+  - name: "Get Old AMI"
+    shell: "/usr/local/bin/aws ec2 describe-images --owners self --output text | grep {{ ami_description_suffix.stdout }} | awk '{print $6}'"
+    register: old_ami
+    when: step_number == 1
+ 
+  - name: "Print Old AMI"
+    debug:
+      var: old_ami.stdout
+   when: step_number == 1
+ 
+  - name: "Destroying old Images (which were created today only!)"
+#    shell: /usr/local/bin/aws ec2 deregister-image --image-id {{ old_ami.stdout }}
+    shell: /usr/local/bin/aws ec2 describe-images --image-ids {{ old_ami.stdout }} | grep ami
+    when: old_ami.stdout == "" and step_number == 1
+ 
+  - name: "Reboot Alert"
+    debug:
+      msg: "IMPORTANT!!! DON'T WORRY You WILL BE REBOOTED NOW!!!! You can continue Phase II after reboot"
+    when: step_number == 1
+ 
+  - name: "Create new GOLD AMI"
+    command: "/usr/local/bin/aws ec2 create-image --instance-id {{ aws_instance }} --name 'Fontis AMI ({{ instance_tag }}) {{ time_stamp.stdout }}' --description {{ instance_tag }}"
+    when: step_number == 1
+ 
+  - local_action: wait_for host={{ ansible_ssh_host }}
+ 
+  - name: "Get GOLD AMI ID"
+    command: sh -c "/usr/local/bin/aws ec2 describe-images --owners {{ AWS_ACCOUNT_ID }} --output text | grep {{ ami_description_suffix.stdout }} | tail -1  | awk '{print $6}'"
+    register: gold_ami_id
+ 
+  - name: "Print GOLD AMI ID"
+    debug:
+      var: gold_ami_id.stdout
+ 
+  - name: "Identify Step Number"
+    set_fact:
+      step_number: 2
+    when: gold_ami_id.stdout != ""
+ 
+  - name: "Print Step Number"
+    debug:
+      var: step_number
+ 
+  - name: "Check Main frontend instance is InService state in LoadBalancer"
+    command: sh -c '/usr/local/bin/aws elb describe-instance-health --load-balancer-name {{ load_balancer_name }} --instances {{ aws_instance }} | grep "InService"'
+    register: frontend_instance_InService
+    when: step_number == 2
+ 
+  - name: "Fail for OutOfService Instance"
+    fail:
+      msg: "Main Frontend Instance {{ aws_instance }} is not InService... EXITING !!!"
+    when: not frontend_instance_InService and step_number == 2
+ 
+  - name: "Look for most recent Amazon Image ID (GOLD AMI ID)"
+    command: sh -c "/usr/local/bin/aws ec2 describe-images --owners {{ AWS_ACCOUNT_ID }} --output text | grep {{ ami_description_suffix.stdout }} | tail -1  | awk '{print $6}'"
+    register: gold_ami_id_found
+    when: step_number == 2
+ 
+  - name: "Confirm_GOLD_AMI_ID"
+    pause: prompt='Found AMI = {{ gold_ami_id.stdout }}. Use this AMI? Press return to continue. Press Ctrl+c and then "a" to abort'
+    when: gold_ami_id_found.stdout and step_number == 2
+ 
+  - name: "Runs suspend_as"
+    debug:
+      msg: '/usr/local/bin/aws ec2 delete-tags --resources {{ aws_instance }} --tags "Key={{ deployment_name.stdout }}"'
+    when: step_number == 2
+ 
+  - name: "Run destroy_frontend"
+    debug:
+      msg: 'Run destroy_frontend from /app/orm/scripts/irm/helpers/aws_destroy'
+    when: step_number == 2
+ 
+  - name: "Run destroy_backend"
+    debug:
+      msg: 'Run destroy_backend from /app/orm/scripts/irm/helpers/aws_destroy'
+    when: step_number == 2
+ 
+  - name: "Run destroy_backend_main"
+    debug:
+      msg: 'Run destroy_backend_main from /app/orm/scripts/irm/helpers/aws_destroy'
+    when: step_number == 2
+ 
+  - name: "Exports DB patches from SVN repository"
+    debug:
+      msg: 'svn export --non-interactive --trust-server-cert --force --username=${svn_user} --password=${svn_password} "${svn_path}/db/patches" ${www_root}/${svn_repo_folder}/db/patches 1>/dev/null 2>/dev/null'
+    when: step_number == 2
+ 
+  - name: "Apply patches"
+    debug:
+      msg: 'lldo db:up ${www_root}/${svn_repo_folder}/db/patches --db-user=${mysql_user} --db-password=${mysql_password} --app-type=${app_type} --platform=${platform} --dynamic-login=true --debug=true'
+    when: step_number == 2
+ 
+  - name: "Delete the SVN Repo folder"
+    debug:
+      msg: 'Run rm -Rf ${www_root}/${svn_repo_folder}/*'
+    when: step_number == 2
+ 
+  - name: "Run recreate_launch_configs"
+    debug:
+      msg: 'Run recreate_launch_configs'
+    when: step_number == 2
+ 
+  - name: "Run destroy_old_launch_configs"
+    debug:
+      msg: 'Run destroy_old_launch_configs'
+    when: step_number == 2
+ 
+  - name: "Run create_backend_main"
+    debug:
+      msg: 'Run create_backend_main'
+    when: step_number == 2
+ 
+  - name: "Run resume_as"
+    debug:
+      msg: 'Run resume_as'
+    when: step_number == 2
+ 
+  - name: "Send SVN diff"
+    debug:
+      msg: '/usr/local/bin/aws sns publish --topic-arn="${aws_deployment_topic_arn}" --subject "${platform_type} ${app_type_upper} Hotpatch ${current_tag/_0/}.${new_rev} (run by ${whoami}) done" --message="${message_body}"'
+    when: step_number == 2
+
